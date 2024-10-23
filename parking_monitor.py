@@ -89,12 +89,16 @@ def log_violation(plate_text, start_time, image_path):
     violation_id = int(time.time() * 1000)  # Use milliseconds as a unique ID
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    # Use "Unknown" if no plate text is provided
+    if not plate_text:
+        plate_text = "Unknown"
+
     # Ensure image_path is the full path
     full_image_path = os.path.abspath(image_path)
 
     cursor.execute('''INSERT INTO violations (id, timestamp, license_plate, location, parking_duration, image_path)
                       VALUES (?, ?, ?, ?, ?, ?)''',
-                   (violation_id, timestamp, plate_text, "Unknown", 0, full_image_path))
+                   (violation_id, timestamp, plate_text, "Manila", 0, full_image_path))
     conn.commit()
     print(f"Violation logged to database with ID: {violation_id}")
     return violation_id
@@ -161,17 +165,16 @@ def start_ocr_thread(ocr_queue, stationary_cars):
                         avg_confidence = sum(result[1] for result in results if result[0] == most_common_plate) / count
 
                         if is_valid_plate(most_common_plate) and avg_confidence > 0.7:
-                            violation_id = log_violation(most_common_plate, stationary_cars[track_id][1], image_path)
-                            stationary_cars[track_id] = (violation_id, stationary_cars[track_id][1], image_path)
-                            print(
-                                f"Illegal parking confirmed for car with track_id {track_id}. License plate: {most_common_plate}, Avg Confidence: {avg_confidence:.2f}")
-                            print(f"Violation logged with ID: {violation_id}")
+                            plate_text = most_common_plate
                         else:
-                            print(
-                                f"Low confidence for car with track_id {track_id}. Best guess: {most_common_plate}, Avg Confidence: {avg_confidence:.2f}")
+                            plate_text = "Unknown"
                     else:
-                        print(
-                            f"No valid license plate detected for car with track_id {track_id} after {max_attempts} attempts.")
+                        plate_text = "Unknown"
+
+                    violation_id = log_violation(plate_text, stationary_cars[track_id][1], image_path)
+                    stationary_cars[track_id] = (violation_id, stationary_cars[track_id][1], image_path)
+                    print(f"Illegal parking logged for car with track_id {track_id}. License plate: {plate_text}")
+                    print(f"Violation logged with ID: {violation_id}")
 
                     del ocr_attempts[track_id]
                     print(f"OCR data for car with track_id {track_id} has been deleted.")
@@ -295,3 +298,4 @@ stationary_cars = {}
 ocr_queue = queue.Queue()
 ocr_thread = threading.Thread(target=start_ocr_thread, args=(ocr_queue, stationary_cars), daemon=True)
 ocr_thread.start()
+
