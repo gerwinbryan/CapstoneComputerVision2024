@@ -15,14 +15,14 @@ car_model = YOLO('models/yolov8n.pt')
 plate_model = YOLO('models/license_plate_detection.pt')
 
 # Initialize video capture
-cap = cv2.VideoCapture('front.MP4')
+cap = cv2.VideoCapture("rtsp://admin:admin123@192.168.1.108:554/cam/realmonitor?channel=3&subtype=0")
 
 # Get video dimensions
 video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
 # Select region of interest before starting threads
-region = select_region('front.MP4', video_width, video_height)
+region = select_region('rtsp://admin:admin123@192.168.1.108:554/cam/realmonitor?channel=3&subtype=0', video_width, video_height)
 if region is None:
     print("Region selection failed. Exiting.")
     exit()
