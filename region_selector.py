@@ -4,10 +4,11 @@ import json
 import os
 
 
-def select_region(image_path, width, height, json_path='region.json'):
+def select_region(image_path, width, height, json_path='region.json', confirm_callback=None):
     # Check if region file exists
     if os.path.exists(json_path):
-        use_existing = input("Existing region found. Use it? (y/n): ").lower() == 'y'
+        use_existing = confirm_callback() if confirm_callback else input(
+            "Existing region found. Use it? (y/n): ").lower() == 'y'
         if use_existing:
             with open(json_path, 'r') as f:
                 return np.array(json.load(f), dtype=np.int32)
@@ -83,7 +84,10 @@ def select_region(image_path, width, height, json_path='region.json'):
 
 
 if __name__ == "__main__":
-    # Test the function
-    region = select_region("front.MP4", 1280, 720)  # Example dimensions
-    if region is not None:
-        print("Selected region:", region)
+    # Get input configuration
+    input_gui = InputConfigGUI()
+    setup_complete, input_path, cap = input_gui.run()
+
+    if not setup_complete:
+        print("Setup cancelled. Exiting.")
+        exit()

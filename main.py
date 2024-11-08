@@ -8,23 +8,30 @@ from collections import defaultdict
 import tkinter as tk
 from region_selector import select_region
 from parking_monitor import handle_stationary_car, finalize_stationary_car, ViolationLogGUI, start_ocr_thread
+from input_gui import InputConfigGUI, confirm_region_selection
 from config import *
 
 # Load YOLOv8 models
 car_model = YOLO('models/yolov8n.pt')
 plate_model = YOLO('models/license_plate_detection.pt')
 
-# Initialize video capture
-cap = cv2.VideoCapture('front.MP4')
+# Get input configuration
+input_gui = InputConfigGUI()
+setup_complete, input_path, cap = input_gui.run()
+
+if not setup_complete:
+    print("Setup cancelled. Exiting.")
+    exit()
 
 # Get video dimensions
 video_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 video_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
 # Select region of interest before starting threads
-region = select_region('front.MP4', video_width, video_height)
+region = select_region(input_path, video_width, video_height, confirm_callback=confirm_region_selection)
 if region is None:
     print("Region selection failed. Exiting.")
+    cap.release()
     exit()
 
 # Create a mask for the selected region

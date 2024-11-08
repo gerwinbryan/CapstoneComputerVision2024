@@ -275,15 +275,9 @@ class ViolationLogGUI:
         print(f"Violation with ID {violation_id} has been removed from the database.")
 
 
-def run_gui():
-    root = tk.Tk()
-    gui = ViolationLogGUI(root)
-    root.mainloop()
-
-
 # Start the GUI in a separate thread
-gui_thread = threading.Thread(target=run_gui, daemon=True)
-gui_thread.start()
+# gui_thread = threading.Thread(target=run_gui, daemon=True)
+# gui_thread.start()
 
 # In your main processing loop, you would call:
 # handle_stationary_car(car_image, track_id, stationary_cars)
