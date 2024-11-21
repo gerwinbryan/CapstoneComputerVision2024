@@ -10,6 +10,7 @@ from region_selector import select_region
 from parking_monitor import handle_stationary_car, finalize_stationary_car, ViolationLogGUI, start_ocr_thread
 from input_gui import InputConfigGUI, confirm_region_selection
 from config import *
+import tkinter.messagebox as messagebox
 
 # Load YOLOv8 models
 car_model = YOLO('models/yolov8n.pt')
@@ -47,6 +48,7 @@ program_running = True
 track_history = defaultdict(lambda: [])
 car_statuses = defaultdict(lambda: "Unknown")
 stationary_cars = {}
+stationary_frame_counts = defaultdict(int)  # Track how long each car has been stationary
 
 
 def read_frames():
@@ -72,12 +74,27 @@ def process_and_display():
     start_time = time.time()
     frame_count = 0
 
+    # Create named window
+    cv2.namedWindow('Car and License Plate Detection')
+
     while program_running:
         if frame_queue.empty():
             time.sleep(0.01)
             continue
 
-        frame, frame_count, frame_time = frame_queue.get()
+        try:
+            frame, frame_count, frame_time = frame_queue.get()
+        except:
+            continue
+
+        # Check if window was closed
+        if cv2.getWindowProperty('Car and License Plate Detection', cv2.WND_PROP_VISIBLE) < 1:
+            if messagebox.askyesno("Confirm Exit", "Are you sure you want to exit the program?"):
+                program_running = False
+                break
+            else:
+                # Recreate window if user cancels
+                cv2.namedWindow('Car and License Plate Detection')
 
         # Resize frame to match the mask size
         frame = cv2.resize(frame, (video_width, video_height))
@@ -122,11 +139,28 @@ def process_and_display():
                             speed = total_distance / time_diff
                             if speed < MOVEMENT_THRESHOLD:
                                 car_statuses[track_id] = "Stationary"
-                                handle_stationary_car(display_car_img, track_id, stationary_cars, ocr_queue)
+                                if track_id not in stationary_frame_counts:
+                                    stationary_frame_counts[track_id] = frame_count
+
+                                if (frame_count - stationary_frame_counts[track_id]) >= ILLEGAL_PARKING_FRAMES:
+                                    handle_stationary_car(display_car_img, track_id, stationary_cars, ocr_queue)
                             else:
                                 car_statuses[track_id] = "Moving"
+                                if track_id in stationary_frame_counts:
+                                    del stationary_frame_counts[track_id]
                                 if track_id in stationary_cars:
                                     finalize_stationary_car(track_id, stationary_cars)
+
+                    # Convert track IDs to a set of integers
+                    current_tracks = {int(box.id) for box in car_results.boxes if box.id is not None}
+                    old_tracks = set(track_history.keys()) - current_tracks
+                    for old_id in old_tracks:
+                        if old_id in track_history:
+                            del track_history[old_id]
+                        if old_id in car_statuses:
+                            del car_statuses[old_id]
+                        if old_id in stationary_frame_counts:
+                            del stationary_frame_counts[old_id]
 
                     status = car_statuses[track_id]
                     cv2.putText(frame, status, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9,
@@ -141,13 +175,18 @@ def process_and_display():
 
         cv2.imshow('Car and License Plate Detection', frame)
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            program_running = False
-            break
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            if messagebox.askyesno("Confirm Exit", "Are you sure you want to exit the program?"):
+                program_running = False
+                break
 
     # Finalize all stationary cars when the program ends
     for track_id in list(stationary_cars.keys()):
         finalize_stationary_car(track_id, stationary_cars)
+
+    # Cleanup
+    cv2.destroyAllWindows()
 
 
 def run_gui():
