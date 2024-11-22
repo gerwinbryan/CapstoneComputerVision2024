@@ -13,12 +13,19 @@ from tkinter import ttk, messagebox  # Add messagebox here
 from PIL import Image, ImageTk
 from config import DISPLAY_WIDTH, DISPLAY_HEIGHT  # Add this import
 from collections import Counter
+import requests
+import firebase_admin
+from firebase_admin import credentials, messaging
 
 # At the top of the file, add:
 DATABASE_PATH = 'parking_violations.db'
 
 # Initialize PaddleOCR
 ocr = PaddleOCR(use_angle_cls=True, lang='en')
+
+# Initialize Firebase Admin SDK once
+cred = credentials.Certificate("firebase-adminsdk.json")
+firebase_admin.initialize_app(cred)
 
 # Database setup
 conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
@@ -30,6 +37,13 @@ cursor.execute('''CREATE TABLE IF NOT EXISTS violations
                    location TEXT,
                    parking_duration INTEGER,
                    image_path TEXT)''')
+conn.commit()
+
+# Add near the other CREATE TABLE statements
+cursor.execute('''CREATE TABLE IF NOT EXISTS fcm_tokens
+                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
+                   token TEXT UNIQUE NOT NULL,
+                   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
 conn.commit()
 
 # Philippine license plate patterns
@@ -86,21 +100,49 @@ def perform_ocr(image_path):
 
 
 def log_violation(plate_text, start_time, image_path):
-    violation_id = int(time.time() * 1000)  # Use milliseconds as a unique ID
+    violation_id = int(time.time() * 1000)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    # Use "Unknown" if no plate text is provided
     if not plate_text:
         plate_text = "Unknown"
 
-    # Ensure image_path is the full path
     full_image_path = os.path.abspath(image_path)
 
-    cursor.execute('''INSERT INTO violations (id, timestamp, license_plate, location, parking_duration, image_path)
+    # Calculate parking duration
+    duration = int(time.time() - start_time)
+
+    # Log to local database
+    cursor.execute('''INSERT INTO violations 
+                      (id, timestamp, license_plate, location, parking_duration, image_path)
                       VALUES (?, ?, ?, ?, ?, ?)''',
-                   (violation_id, timestamp, plate_text, "Manila", 0, full_image_path))
+                   (violation_id, timestamp, plate_text, "Manila", duration, full_image_path))
     conn.commit()
-    print(f"Violation logged to database with ID: {violation_id}")
+
+    # Send FCM notification directly
+    try:
+        message = messaging.Message(
+            notification=messaging.Notification(
+                title='New Parking Violation',
+                body=f'Vehicle with plate {plate_text} detected'
+            ),
+            android=messaging.AndroidConfig(
+                priority='high',
+                notification=messaging.AndroidNotification(
+                    icon='ic_launcher',
+                    color='#7B1FA2',
+                    channel_id='parking_violations'
+                )
+            ),
+            # Send to topic instead of specific tokens
+            topic='parking_violations'  # All devices will subscribe to this topic
+        )
+
+        response = messaging.send(message)
+        print(f"Successfully sent notification: {response}")
+
+    except Exception as e:
+        print(f"Error sending notification: {e}")
+
     return violation_id
 
 
@@ -212,8 +254,15 @@ class ViolationLogGUI:
 
         self.tree.pack(fill=tk.BOTH, expand=1)
 
-        self.remove_button = tk.Button(master, text="Remove Selected", command=self.remove_selected)
-        self.remove_button.pack()
+        # Add buttons frame
+        button_frame = tk.Frame(master)
+        button_frame.pack()
+
+        self.remove_button = tk.Button(button_frame, text="Remove Selected", command=self.remove_selected)
+        self.remove_button.pack(side=tk.LEFT, padx=5)
+
+        self.notify_button = tk.Button(button_frame, text="Send Test Notification", command=self.send_test_notification)
+        self.notify_button.pack(side=tk.LEFT, padx=5)
 
         self.tree.bind("<Double-1>", self.on_double_click)
 
@@ -273,6 +322,22 @@ class ViolationLogGUI:
         cursor.execute("DELETE FROM violations WHERE id = ?", (violation_id,))
         conn.commit()
         print(f"Violation with ID {violation_id} has been removed from the database.")
+
+    def send_test_notification(self):
+        try:
+            message = messaging.Message(
+                notification=messaging.Notification(
+                    title='Test Notification',
+                    body='This is a test notification from the parking violation system'
+                ),
+                topic='parking_violations'  # Send to all subscribed devices
+            )
+
+            response = messaging.send(message)
+            messagebox.showinfo("Success", "Test notification sent!")
+
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to send notification: {str(e)}")
 
 
 # Start the GUI in a separate thread
