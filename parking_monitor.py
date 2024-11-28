@@ -9,13 +9,15 @@ import re
 import os
 import queue
 import tkinter as tk
-from tkinter import ttk, messagebox  # Add messagebox here
+from tkinter import ttk, messagebox, filedialog  # Add messagebox and filedialog here
 from PIL import Image, ImageTk
 from config import DISPLAY_WIDTH, DISPLAY_HEIGHT  # Add this import
 from collections import Counter
 import requests
 import firebase_admin
 from firebase_admin import credentials, messaging
+import csv  # Add this import at the top
+import openpyxl  # Add this import at the top
 
 # At the top of the file, add:
 DATABASE_PATH = 'parking_violations.db'
@@ -235,6 +237,7 @@ class ViolationLogGUI:
     def __init__(self, master):
         self.master = master
         master.title("Parking Violation Logs")
+        master.geometry("800x600")  # Set a larger window size
 
         self.tree = ttk.Treeview(master, columns=('ID', 'Timestamp', 'License Plate', 'Location', 'Duration', 'Image'),
                                  show='headings', height=20)
@@ -263,6 +266,9 @@ class ViolationLogGUI:
 
         self.notify_button = tk.Button(button_frame, text="Send Test Notification", command=self.send_test_notification)
         self.notify_button.pack(side=tk.LEFT, padx=5)
+
+        self.export_button = tk.Button(button_frame, text="Export", command=self.export_logs)  # Update Export button
+        self.export_button.pack(side=tk.LEFT, padx=5)
 
         self.tree.bind("<Double-1>", self.on_double_click)
 
@@ -338,6 +344,67 @@ class ViolationLogGUI:
 
         except Exception as e:
             messagebox.showerror("Error", f"Failed to send notification: {str(e)}")
+
+    def export_logs(self):
+        """Open export dialog to choose file format."""
+        ExportDialog(self.master, self.perform_export)
+
+    def perform_export(self, file_type):
+        """Perform the export based on the selected file type."""
+        if file_type == "csv":
+            file_path = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=[("CSV files", "*.csv")])
+            if file_path:
+                with open(file_path, mode='w', newline='') as file:
+                    writer = csv.writer(file)
+                    writer.writerow(['ID', 'Timestamp', 'License Plate', 'Location', 'Duration', 'Image'])  # Write header
+
+                    cursor.execute("SELECT id, timestamp, license_plate, location, parking_duration, image_path FROM violations ORDER BY timestamp DESC")
+                    for row in cursor.fetchall():
+                        writer.writerow(row)  # Write each row of data
+
+                messagebox.showinfo("Export Successful", f"The violation logs have been exported to {file_path}.")
+        
+        elif file_type == "excel":
+            file_path = filedialog.asksaveasfilename(defaultextension=".xlsx", filetypes=[("Excel files", "*.xlsx")])
+            if file_path:
+                workbook = openpyxl.Workbook()
+                sheet = workbook.active
+                sheet.title = "Violation Logs"
+
+                # Write header
+                sheet.append(['ID', 'Timestamp', 'License Plate', 'Location', 'Duration', 'Image'])
+
+                cursor.execute("SELECT id, timestamp, license_plate, location, parking_duration, image_path FROM violations ORDER BY timestamp DESC")
+                for row in cursor.fetchall():
+                    sheet.append(row)  # Write each row of data
+
+                workbook.save(file_path)
+                messagebox.showinfo("Export Successful", f"The violation logs have been exported to {file_path}.")
+
+
+class ExportDialog:
+    def __init__(self, master, callback):
+        self.master = master
+        self.callback = callback
+        self.top = tk.Toplevel(master)
+        self.top.title("Choose Export Format")
+        self.top.geometry("300x150")
+
+        label = tk.Label(self.top, text="Choose type of file:")
+        label.pack(pady=10)
+
+        csv_button = tk.Button(self.top, text="CSV", command=lambda: self.export("csv"))
+        csv_button.pack(pady=5)
+
+        excel_button = tk.Button(self.top, text="Excel", command=lambda: self.export("excel"))
+        excel_button.pack(pady=5)
+
+        cancel_button = tk.Button(self.top, text="Cancel", command=self.top.destroy)
+        cancel_button.pack(pady=5)
+
+    def export(self, file_type):
+        self.callback(file_type)
+        self.top.destroy()
 
 
 # Start the GUI in a separate thread
