@@ -1,6 +1,10 @@
+from ultralytics import YOLO
+from ultralytics.utils import LOGGER
+LOGGER.info = lambda x: None  # Suppress info messages
+LOGGER.warning = lambda x: None  # Suppress warnings too if needed
+
 import cv2
 import numpy as np
-from ultralytics import YOLO
 import threading
 import queue
 import time
@@ -90,19 +94,15 @@ def process_and_display():
         # Check if window was closed
         if cv2.getWindowProperty('Car and License Plate Detection', cv2.WND_PROP_VISIBLE) < 1:
             if messagebox.askyesno("Confirm Exit", "Are you sure you want to exit the program?"):
-                print("Exit confirmed. Starting cleanup...")
                 program_running = False
                 break
             else:
-                print("Exit cancelled. Recreating window...")
+                # Recreate window if user cancels
                 cv2.namedWindow('Car and License Plate Detection')
 
         # Resize frame to match the mask size
         frame = cv2.resize(frame, (video_width, video_height))
         masked_frame = cv2.bitwise_and(frame, frame, mask=mask)
-
-        # Create clean frame copy here, after masking but before any drawings
-        clean_frame = masked_frame.copy()
 
         car_results = car_model.track(masked_frame, persist=True)[0]
 
@@ -113,17 +113,34 @@ def process_and_display():
                 if mask[int((y1 + y2) / 2), int((x1 + x2) / 2)] == 0:
                     continue
 
+                # Expand the crop area by 50 pixels in each direction
+                crop_x1 = max(0, x1 - 50)
+                crop_y1 = max(0, y1 - 50)
+                crop_x2 = min(frame.shape[1], x2 + 50)
+                crop_y2 = min(frame.shape[0], y2 + 50)
+
+                # Get the original image crop without bounding boxes
+                car_img = frame.copy()[crop_y1:crop_y2, crop_x1:crop_x2]
+                
+                # Draw car bounding box on the main display frame
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-                car_img = frame[y1:y2, x1:x2]
-                display_car_img = cv2.resize(car_img, (DISPLAY_WIDTH, DISPLAY_HEIGHT))
+                # Get the display crop with bounding boxes
+                display_car_img = frame[crop_y1:crop_y2, crop_x1:crop_x2]
+                display_car_img = cv2.resize(display_car_img, (DISPLAY_WIDTH, DISPLAY_HEIGHT))
 
+                # Detect license plate on the clean crop
                 plate_results = plate_model(car_img)[0]
 
                 if len(plate_results.boxes) > 0:
                     plate_box = plate_results.boxes[0]
                     px1, py1, px2, py2 = map(int, plate_box.xyxy[0])
-                    cv2.rectangle(frame, (x1 + px1, y1 + py1), (x1 + px2, y1 + py2), (255, 0, 0), 2)
+                    
+                    # Draw plate box on main frame
+                    cv2.rectangle(frame, 
+                                (crop_x1 + px1, crop_y1 + py1), 
+                                (crop_x1 + px2, crop_y1 + py2), 
+                                (255, 0, 0), 2)
 
                 track_id = int(car_box.id) if car_box.id is not None else -1
                 if track_id != -1:
@@ -147,12 +164,7 @@ def process_and_display():
                                     stationary_frame_counts[track_id] = frame_count
 
                                 if (frame_count - stationary_frame_counts[track_id]) >= ILLEGAL_PARKING_FRAMES:
-                                    # Convert PyTorch tensor to numpy array before getting coordinates
-                                    x1, y1, x2, y2 = car_box.xyxy[0].cpu().numpy().astype(int)
-                                    # Create the car crop from clean frame
-                                    car_crop = clean_frame[y1:y2, x1:x2]
-                                    # Pass both the clean frame and the crop coordinates
-                                    handle_stationary_car(clean_frame, (x1, y1, x2, y2), car_crop, track_id, stationary_cars, ocr_queue)
+                                    handle_stationary_car(car_img, track_id, stationary_cars, ocr_queue)
                             else:
                                 car_statuses[track_id] = "Moving"
                                 if track_id in stationary_frame_counts:
@@ -184,42 +196,22 @@ def process_and_display():
 
         cv2.imshow('Car and License Plate Detection', frame)
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            # Instead of showing messagebox here, set a flag
-            root.event_generate('<<RequestExit>>')
-            break
+        key = cv2.waitKey(1) & 0xFF
+        if key == ord('q'):
+            if messagebox.askyesno("Confirm Exit", "Are you sure you want to exit the program?"):
+                program_running = False
+                break
 
     # Finalize all stationary cars when the program ends
-    print(f"Number of stationary cars to finalize: {len(stationary_cars)}")
     for track_id in list(stationary_cars.keys()):
-        print(f"Finalizing car with track_id: {track_id}")
         finalize_stationary_car(track_id, stationary_cars)
-    print("Finalization complete")
 
     # Cleanup
     cv2.destroyAllWindows()
 
 
-def on_exit_request(event):
-    """Handle exit request in the main thread"""
-    global program_running, ocr_thread
-    if messagebox.askyesno("Confirm Exit", "Are you sure you want to exit the program?"):
-        print("Exit confirmed. Starting cleanup...")
-        
-        # Update termination time using OCR thread's notification buffer
-        if hasattr(ocr_thread, 'notification_buffer') and ocr_thread.notification_buffer:
-            print("Updating notification buffer termination time...")
-            ocr_thread.notification_buffer.update_termination_time()
-            print("Notification buffer termination time updated")
-        
-        program_running = False
-        root.quit()
-
-
 def run_gui():
-    global root
     root = tk.Tk()
-    root.bind('<<RequestExit>>', on_exit_request)  # Bind the exit handler
     gui = ViolationLogGUI(root)
     root.mainloop()
 

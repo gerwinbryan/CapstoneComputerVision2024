@@ -20,7 +20,6 @@ PyInstaller.__main__.run([
     f'--add-data={os.path.join(paddleocr_path, "tools")};tools',
     f'--add-data={os.path.join(paddle_path, "libs")};paddle/libs',
     f'--add-data={os.path.join(paddleocr_path, "ppocr")};ppocr',
-    f'--add-data={os.path.join(current_dir, "firebase-adminsdk.json")};.',
     # Hidden imports
     '--hidden-import=paddleocr',
     '--hidden-import=paddle',
@@ -32,12 +31,8 @@ PyInstaller.__main__.run([
     '--hidden-import=shapely',
     '--hidden-import=pyclipper',
     '--hidden-import=lanms',
-    '--hidden-import=torch',
-    '--hidden-import=torchvision',
     # Collect all data
     '--collect-all=paddleocr',
     '--collect-all=paddle',
     '--collect-all=ultralytics',
-    '--collect-all=torch',
-    '--collect-all=torchvision',
 ]) 
