@@ -20,6 +20,7 @@ import csv  # Add this import at the top
 import openpyxl  # Add this import at the top
 from color_detector import ColorDetector  # Add this import
 from notification_buffer import NotificationBuffer  # Add this import
+from firebase_sync import FirebaseSync
 
 # At the top of the file, add:
 DATABASE_PATH = 'parking_violations.db'
@@ -280,6 +281,14 @@ class ViolationLogGUI:
         self.image_refs = {}  # Store references to images
         self.update_logs()
         self.update_notifications()
+
+        # Start Firebase sync in background
+        self.firebase_sync = FirebaseSync()
+        sync_thread = threading.Thread(
+            target=self.firebase_sync.start_periodic_sync,
+            daemon=True
+        )
+        sync_thread.start()
 
     def update_logs(self):
         for i in self.tree.get_children():
