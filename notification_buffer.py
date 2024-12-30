@@ -110,17 +110,20 @@ class NotificationBuffer:
 
         # Prepare message
         notifications = self.buffer["pending_notifications"]
-        message_text = "New Illegal Parking:\n"
+        violation_count = len(notifications)
+        
+        # Update message format to include count
+        message_text = f"New Illegal Parking ({violation_count} violations):\n"
         for notif in notifications:
             message_text += f"- {notif['license_plate']} ({notif['color']})\n"
 
         # Send FCM message
         message = messaging.Message(
             notification=messaging.Notification(
-                title="Illegal Parking Update",
+                title=f"Illegal Parking Update ({violation_count})",  # Updated title
                 body=message_text
             ),
-            topic="Illegal_Parking"
+            topic="Illegal-Parking"
         )
 
         try:

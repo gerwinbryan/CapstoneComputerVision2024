@@ -15,6 +15,8 @@ from parking_monitor import handle_stationary_car, finalize_stationary_car, Viol
 from input_gui import InputConfigGUI, confirm_region_selection
 from config import *
 import tkinter.messagebox as messagebox
+from collections import deque, defaultdict
+from state_tracker import StateTracker
 
 # Load YOLOv8 models
 car_model = YOLO('models/yolov8n.pt')
@@ -54,6 +56,12 @@ car_statuses = defaultdict(lambda: "Unknown")
 stationary_cars = {}
 stationary_frame_counts = defaultdict(int)  # Track how long each car has been stationary
 
+# Initialize the state tracker (should be outside the loop)
+state_tracker = StateTracker()
+
+# Add at the top with other initializations
+movement_counters = defaultdict(int)
+MOVEMENT_CONSISTENCY_THRESHOLD = 10  # Adjust this value based on your needs
 
 def read_frames():
     global program_running
@@ -74,7 +82,7 @@ def read_frames():
 
 
 def process_and_display():
-    global program_running, track_history
+    global program_running, track_history, movement_counters
     start_time = time.time()
     frame_count = 0
 
@@ -145,47 +153,53 @@ def process_and_display():
                 track_id = int(car_box.id) if car_box.id is not None else -1
                 if track_id != -1:
                     car_center = ((x1 + x2) // 2, (y1 + y2) // 2)
-                    track = track_history[track_id]
-                    track.append((frame_time, car_center))
+                    
+                    # Calculate movement
+                    movement_detected = False
+                    if track_id in track_history and len(track_history[track_id]) > 1:
+                        recent_positions = [pos for _, pos in track_history[track_id][-2:]]
+                        movement = np.linalg.norm(np.array(recent_positions[1]) - np.array(recent_positions[0]))
+                        movement_detected = movement > MOVEMENT_THRESHOLD
 
-                    if len(track) > STATIONARY_FRAMES:
-                        track.pop(0)
+                    # Update state using state tracker
+                    current_state = state_tracker.update_state(
+                        track_id,
+                        car_center,
+                        frame_time,  # Use frame_time instead of time.time()
+                        movement_detected
+                    )
 
-                        start_pos = np.array(track[0][1])
-                        end_pos = np.array(track[-1][1])
-                        total_distance = np.linalg.norm(end_pos - start_pos)
-                        time_diff = track[-1][0] - track[0][0]
-
-                        if time_diff > 0:
-                            speed = total_distance / time_diff
-                            if speed < MOVEMENT_THRESHOLD:
-                                car_statuses[track_id] = "Stationary"
-                                if track_id not in stationary_frame_counts:
-                                    stationary_frame_counts[track_id] = frame_count
-
-                                if (frame_count - stationary_frame_counts[track_id]) >= ILLEGAL_PARKING_FRAMES:
-                                    handle_stationary_car(car_img, track_id, stationary_cars, ocr_queue)
-                            else:
-                                car_statuses[track_id] = "Moving"
-                                if track_id in stationary_frame_counts:
-                                    del stationary_frame_counts[track_id]
-                                if track_id in stationary_cars:
-                                    finalize_stationary_car(track_id, stationary_cars)
-
-                    # Convert track IDs to a set of integers
+                    # Use the state for violation detection
+                    if current_state == "Stationary":
+                        # Reset movement counter when car becomes stationary
+                        movement_counters[track_id] = 0
+                        
+                        if track_id not in stationary_frame_counts:
+                            stationary_frame_counts[track_id] = frame_count
+                        if (frame_count - stationary_frame_counts[track_id]) >= ILLEGAL_PARKING_FRAMES:
+                            handle_stationary_car(car_img, track_id, stationary_cars, ocr_queue)
+                    else:
+                        # Increment movement counter when not stationary
+                        movement_counters[track_id] += 1
+                        
+                        if movement_counters[track_id] >= MOVEMENT_CONSISTENCY_THRESHOLD:
+                            # Only finalize if movement has been consistent
+                            if track_id in stationary_frame_counts:
+                                del stationary_frame_counts[track_id]
+                            if track_id in stationary_cars:
+                                finalize_stationary_car(track_id, stationary_cars)
+                                movement_counters[track_id] = 0  # Reset counter after finalizing
+                        
+                    # Clean up old tracks
                     current_tracks = {int(box.id) for box in car_results.boxes if box.id is not None}
-                    old_tracks = set(track_history.keys()) - current_tracks
-                    for old_id in old_tracks:
-                        if old_id in track_history:
-                            del track_history[old_id]
-                        if old_id in car_statuses:
-                            del car_statuses[old_id]
-                        if old_id in stationary_frame_counts:
-                            del stationary_frame_counts[old_id]
+                    state_tracker.clean_old_tracks(current_tracks)
+                    
+                    # Clean up old movement counters
+                    movement_counters = {k: v for k, v in movement_counters.items() if k in current_tracks}
 
-                    status = car_statuses[track_id]
-                    cv2.putText(frame, status, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9,
-                                (0, 0, 255) if status == "Stationary" else (255, 0, 0), 2)
+                    # Display status
+                    cv2.putText(frame, current_state, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9,
+                                (0, 0, 255) if current_state == "Stationary" else (255, 0, 0), 2)
 
         cv2.polylines(frame, [region], True, (0, 255, 255), 2)
 

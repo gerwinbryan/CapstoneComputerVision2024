@@ -149,16 +149,15 @@ def handle_stationary_car(car_image, track_id, stationary_cars, ocr_queue):
         cv2.imwrite(image_path, car_image)
         
         start_time = time.time()
-        stationary_cars[track_id] = (None, start_time, image_path)
+        stationary_cars[track_id] = (None, start_time, image_path, 0)
         ocr_queue.put((track_id, image_path))
-        print(
-            f"Car with track_id {track_id} detected as potentially illegally parked at {datetime.fromtimestamp(start_time).strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"Car with track_id {track_id} detected as potentially illegally parked at {datetime.fromtimestamp(start_time).strftime('%Y-%m-%d %H:%M:%S')}")
 
 
 def finalize_stationary_car(track_id, stationary_cars):
     if track_id in stationary_cars:
-        violation_id, start_time, image_path = stationary_cars.pop(track_id)
-        if violation_id:
+        violation_id, start_time, image_path, movement_counter = stationary_cars.pop(track_id)
+        if violation_id and movement_counter < 15:
             end_time = time.time()
             duration = int(end_time - start_time)
             update_parking_duration(violation_id, duration)
@@ -211,7 +210,7 @@ def start_ocr_thread(ocr_queue, stationary_cars):
                     violation_id = log_violation(plate_text, stationary_cars[track_id][1], 
                                               image_path, car_color)
                     stationary_cars[track_id] = (violation_id, stationary_cars[track_id][1], 
-                                               image_path)
+                                               image_path, 0)
 
                     print(f"Illegal parking logged for car with track_id {track_id}. License plate: {plate_text}")
                     print(f"Violation logged with ID: {violation_id}")
@@ -302,9 +301,12 @@ class ViolationLogGUI:
         self.master.after(5000, self.update_logs)
 
     def on_double_click(self, event):
-        item = self.tree.selection()[0]
-        image_path = self.tree.item(item, "values")[6]  # Change from 5 to 6
-        self.show_full_image(image_path)
+        """Handle double click on tree item"""
+        selected = self.tree.selection()
+        if selected:  # Check if there's a selection
+            item = selected[0]
+            image_path = self.tree.item(item, "values")[6]  # Change from 5 to 6
+            self.show_full_image(image_path)
 
     def show_full_image(self, image_path):
         if os.path.exists(image_path):
@@ -322,7 +324,7 @@ class ViolationLogGUI:
                 messagebox.showerror("Error", f"Failed to open image: {str(e)}")
         else:
             messagebox.showerror("Error", f"Image not found: {image_path}")
-
+    
     def remove_selected(self):
         selected_items = self.tree.selection()
         if selected_items:
@@ -360,7 +362,7 @@ class ViolationLogGUI:
                     title='Test Notification',
                     body='This is a test notification from the Illegal Parking system'
                 ),
-                topic='Illegal Parking'  # Send to all subscribed devices
+                topic='Illegal-Parking'  # Send to all subscribed devices
             )
 
             response = messaging.send(message)
